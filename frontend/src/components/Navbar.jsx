@@ -48,6 +48,16 @@ const Navbar = () => {
                 <span className="font-medium">History</span>
               </Link>
 
+              {user.role === 'driver' && (
+                <Link 
+                  to="/driver/payout-settings" 
+                  className="flex items-center space-x-1 text-gray-600 hover:text-black transition-colors"
+                >
+                  <span className="text-[18px]">🏦</span>
+                  <span className="font-medium">Payout Settings</span>
+                </Link>
+              )}
+
               <div className="flex items-center space-x-3 ml-4 border-l pl-4">
                 <div className="flex flex-col items-end">
                   <span className="text-sm font-semibold text-gray-900">{user.name}</span>
