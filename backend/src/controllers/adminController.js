@@ -52,4 +52,19 @@ const getDriverDirectory = async (req, res) => {
   }
 };
 
-module.exports = { getPlatformStats, getDriverDirectory };
+const blacklistDriver = async (req, res) => {
+  const { driverId, blacklisted } = req.body;
+  try {
+    await db.query(
+      'UPDATE drivers SET is_blacklisted = $1 WHERE id = $2',
+      [blacklisted, driverId]
+    );
+    const action = blacklisted ? 'blacklisted' : 'reinstated';
+    res.json({ message: `Driver ${action} successfully` });
+  } catch (err) {
+    console.error('Blacklist driver error:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+module.exports = { getPlatformStats, getDriverDirectory, blacklistDriver };

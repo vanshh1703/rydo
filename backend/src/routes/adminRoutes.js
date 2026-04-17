@@ -1,6 +1,7 @@
 const express = require('express');
 const { getPlatformStats, getDriverDirectory } = require('../controllers/adminController');
 const { getPendingSettlements, processBatchSettlement, getWithdrawalRequests, handleWithdrawalRequest } = require('../controllers/payoutController');
+const { updateConfig, getConfigs } = require('../controllers/fintechController');
 const { authMiddleware, roleMiddleware } = require('../utils/authMiddleware');
 const router = express.Router();
 
@@ -14,5 +15,12 @@ router.post('/settle-all', authMiddleware, roleMiddleware(['admin']), processBat
 // Withdrawal management
 router.get('/withdrawals', authMiddleware, roleMiddleware(['admin']), getWithdrawalRequests);
 router.post('/handle-withdrawal', authMiddleware, roleMiddleware(['admin']), handleWithdrawalRequest);
+
+// Platform config management
+router.get('/configs', authMiddleware, roleMiddleware(['admin']), getConfigs);
+router.patch('/configs', authMiddleware, roleMiddleware(['admin']), updateConfig);
+
+// Driver management
+router.post('/blacklist-driver', authMiddleware, roleMiddleware(['admin']), require('../controllers/adminController').blacklistDriver);
 
 module.exports = router;

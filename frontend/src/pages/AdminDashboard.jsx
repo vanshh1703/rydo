@@ -3,7 +3,8 @@ import axios from 'axios';
 import { 
   BarChart3, Users, Car, CheckCircle2, XCircle, 
   IndianRupee, TrendingUp, AlertCircle, Phone, 
-  Star, Search, RefreshCcw, Landmark, Clock, CheckCircle, Wallet, ChevronRight
+  Star, Search, RefreshCcw, Landmark, Clock, CheckCircle, Wallet, ChevronRight,
+  Settings, Shield, Percent, Ban, CheckCheck
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -14,12 +15,17 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState('overview'); // overview, drivers, finance
+  const [activeTab, setActiveTab] = useState('overview');
 
   // Finance States
   const [pendingSettlements, setPendingSettlements] = useState([]);
   const [withdrawalRequests, setWithdrawalRequests] = useState([]);
   const [isProcessingSettlement, setIsProcessingSettlement] = useState(false);
+
+  // Settings States
+  const [configs, setConfigs] = useState({});
+  const [configEdits, setConfigEdits] = useState({});
+  const [savingConfig, setSavingConfig] = useState(false);
 
   const fetchData = async () => {
     const freshToken = localStorage.getItem('token');
@@ -41,7 +47,13 @@ const AdminDashboard = () => {
       fetchResource('http://localhost:5000/api/admin/stats', setStats),
       fetchResource('http://localhost:5000/api/admin/drivers', setDrivers),
       fetchResource('http://localhost:5000/api/admin/pending-settlements', setPendingSettlements),
-      fetchResource('http://localhost:5000/api/admin/withdrawals', setWithdrawalRequests)
+      fetchResource('http://localhost:5000/api/admin/withdrawals', setWithdrawalRequests),
+      fetchResource('http://localhost:5000/api/admin/configs', (data) => {
+        const map = {};
+        data.forEach(c => { map[c.key] = c.value; });
+        setConfigs(map);
+        setConfigEdits(map);
+      }),
     ]);
 
     setLoading(false);
@@ -69,13 +81,43 @@ const AdminDashboard = () => {
   const handleWithdrawal = async (requestId, status) => {
     try {
       await axios.post('http://localhost:5000/api/admin/handle-withdrawal', {
-        requestId,
-        status
+        requestId, status
       }, { headers: { Authorization: `Bearer ${token}` } });
       alert(`Withdrawal request ${status}`);
       fetchData();
     } catch (err) {
       alert('Failed to process withdrawal request');
+    }
+  };
+
+  const handleSaveConfig = async (key) => {
+    setSavingConfig(true);
+    try {
+      await axios.patch('http://localhost:5000/api/admin/configs', 
+        { key, value: configEdits[key] },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setConfigs(prev => ({ ...prev, [key]: configEdits[key] }));
+      alert(`Config "${key}" updated successfully`);
+    } catch (err) {
+      alert('Failed to update config');
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  const handleBlacklistDriver = async (driverId, currentStatus) => {
+    const action = currentStatus ? 'reinstate' : 'blacklist';
+    if (!window.confirm(`Are you sure you want to ${action} this driver?`)) return;
+    try {
+      await axios.post('http://localhost:5000/api/admin/blacklist-driver',
+        { driverId, blacklisted: !currentStatus },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      alert(`Driver ${action}d successfully`);
+      fetchData();
+    } catch (err) {
+      alert('Failed to update driver status');
     }
   };
 
@@ -118,6 +160,10 @@ const AdminDashboard = () => {
                 onClick={() => setActiveTab('finance')}
                 className={`px-6 py-3 rounded-xl font-bold transition-all ${activeTab === 'finance' ? 'bg-gray-900 text-white shadow-lg' : 'text-gray-500 hover:bg-gray-50'}`}
               >Finance {withdrawalRequests.length > 0 && <span className="ml-2 bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full animate-pulse">{withdrawalRequests.length}</span>}</button>
+              <button 
+                onClick={() => setActiveTab('settings')}
+                className={`px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 ${activeTab === 'settings' ? 'bg-gray-900 text-white shadow-lg' : 'text-gray-500 hover:bg-gray-50'}`}
+              ><Settings size={16} />Settings</button>
             </div>
             <button 
               onClick={fetchData}
@@ -427,6 +473,96 @@ const AdminDashboard = () => {
                         </tr>
                       ))
                     )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Settings Tab */}
+        {activeTab === 'settings' && (
+          <div className="space-y-8">
+            {/* Commission Config */}
+            <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-xl overflow-hidden">
+              <div className="p-10 border-b border-gray-50 bg-gray-50/30">
+                <h2 className="text-2xl font-black text-gray-900 flex items-center gap-3">
+                  <Percent size={24} className="text-blue-600" />Platform Settings
+                </h2>
+                <p className="text-gray-400 text-sm mt-1">Adjust commission, pricing and matching without a code deploy.</p>
+              </div>
+              <div className="p-10 grid grid-cols-1 md:grid-cols-3 gap-8">
+                {[
+                  { key: 'commission_rate', label: 'Commission Rate', unit: '%', desc: 'Deducted from each ride fare' },
+                  { key: 'daily_sub_price', label: 'Day Pass Price', unit: '₹', desc: 'Zero-commission daily plan cost' },
+                  { key: 'matching_timeout_sec', label: 'Match Timeout', unit: 's', desc: 'Seconds before auto-cancel' },
+                ].map(({ key, label, unit, desc }) => (
+                  <div key={key} className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
+                    <p className="font-black text-sm uppercase tracking-wider text-gray-700 mb-1">{label}</p>
+                    <p className="text-gray-400 text-xs mb-4">{desc}</p>
+                    <div className="flex gap-3 items-center">
+                      <div className="relative flex-1">
+                        <input type="number" value={configEdits[key] || ''}
+                          onChange={(e) => setConfigEdits(prev => ({ ...prev, [key]: e.target.value }))}
+                          className="w-full bg-white border-2 border-gray-200 rounded-xl py-3 px-4 font-black text-xl focus:outline-none focus:border-blue-500 transition-all"
+                        />
+                        <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm">{unit}</span>
+                      </div>
+                      <button onClick={() => handleSaveConfig(key)} disabled={savingConfig || configEdits[key] === configs[key]}
+                        className="p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-40"
+                      ><CheckCheck size={20} /></button>
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-2">Current: <strong>{configs[key]}{unit}</strong></p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Driver Blacklist */}
+            <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-xl overflow-hidden">
+              <div className="p-10 border-b border-gray-50 bg-gray-50/30">
+                <h2 className="text-2xl font-black text-gray-900 flex items-center gap-3">
+                  <Ban size={24} className="text-red-500" />Driver Access Control
+                </h2>
+                <p className="text-gray-400 text-sm mt-1">Blacklist or reinstate drivers from the platform.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="text-gray-400 text-[10px] font-black uppercase tracking-widest border-b border-gray-50">
+                      <th className="px-10 py-6">Driver</th>
+                      <th className="px-10 py-6">Vehicle</th>
+                      <th className="px-10 py-6">Rides</th>
+                      <th className="px-10 py-6">Earnings</th>
+                      <th className="px-10 py-6">Status</th>
+                      <th className="px-10 py-6 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {drivers.map(d => (
+                      <tr key={d.id} className={`hover:bg-gray-50/80 transition-all ${d.is_blacklisted ? 'opacity-50' : ''}`}>
+                        <td className="px-10 py-5">
+                          <p className="font-bold text-gray-900">{d.driver_name}</p>
+                          <p className="text-xs text-gray-400">{d.driver_phone}</p>
+                        </td>
+                        <td className="px-10 py-5">
+                          <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-xs font-bold uppercase">{d.vehicle_type}</span>
+                        </td>
+                        <td className="px-10 py-5 font-bold text-gray-700">{d.rides_completed || 0}</td>
+                        <td className="px-10 py-5 font-bold text-gray-900">₹{parseFloat(d.total_earnings || 0).toLocaleString()}</td>
+                        <td className="px-10 py-5">
+                          {d.is_blacklisted
+                            ? <span className="bg-red-50 text-red-600 border border-red-100 px-3 py-1 rounded-full text-xs font-black">Blacklisted</span>
+                            : <span className="bg-green-50 text-green-600 border border-green-100 px-3 py-1 rounded-full text-xs font-black">Active</span>
+                          }
+                        </td>
+                        <td className="px-10 py-5 text-right">
+                          <button onClick={() => handleBlacklistDriver(d.id, d.is_blacklisted)}
+                            className={`px-4 py-2 rounded-xl text-xs font-black uppercase active:scale-95 transition-all ${d.is_blacklisted ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-red-600 text-white hover:bg-red-700'}`}
+                          >{d.is_blacklisted ? 'Reinstate' : 'Blacklist'}</button>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>

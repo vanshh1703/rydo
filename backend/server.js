@@ -3,8 +3,24 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const { rateLimit } = require('express-rate-limit');
 
 dotenv.config();
+
+// Rate limiters
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  message: { message: 'Too many attempts. Please try again after 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 120,
+  message: { message: 'Too many requests. Please slow down.' },
+});
 
 const app = express();
 const server = http.createServer(app);
@@ -28,9 +44,9 @@ const rideRoutes = require('./src/routes/rideRoutes');
 const adminRoutes = require('./src/routes/adminRoutes');
 const setupRideSockets = require('./src/sockets/rideSocket');
 
-app.use('/auth', authRoutes);
-app.use('/ride', rideRoutes);
-app.use('/api/admin', adminRoutes);
+app.use('/auth', authLimiter, authRoutes);
+app.use('/ride', apiLimiter, rideRoutes);
+app.use('/api/admin', apiLimiter, adminRoutes);
 
 app.get('/', (req, res) => {
   res.send('Rydo Backend API is running');

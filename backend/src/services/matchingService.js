@@ -63,6 +63,7 @@ class MatchingService {
             const query = `
                 SELECT id FROM drivers
                 WHERE is_online = true 
+                AND is_blacklisted = false
                 AND vehicle_type = $3
                 AND (6371 * acos(
                     cos(radians($1)) * cos(radians(current_lat)) * 
