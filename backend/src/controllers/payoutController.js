@@ -1,4 +1,6 @@
 const db = require('../models/db');
+const razorpayService = require('../services/razorpayService');
+const { v4: uuidv4 } = require('crypto').webcrypto ? require('crypto') : { v4: () => require('crypto').randomUUID() };
 
 // Driver: Request early withdrawal
 const requestWithdrawal = async (req, res) => {
@@ -130,15 +132,16 @@ const getWithdrawalRequests = async (req, res) => {
     }
 };
 
-// Admin: Approve/Reject withdrawal request
+// Admin: Approve/Reject withdrawal request with Razorpay payout
 const handleWithdrawalRequest = async (req, res) => {
-    const { requestId, status } = req.body; // status: 'approved' or 'rejected'
+    const { requestId, status } = req.body;
+    const adminId = req.user.id;
 
     try {
         await db.query('BEGIN');
 
-        const requestRes = await db.query('SELECT * FROM withdrawal_requests WHERE id = $1', [requestId]);
-        if (requestRes.rows.length === 0) {
+        const requestRes = await db.query('SELECT * FROM withdrawal_requests WHERE id = $1 FOR UPDATE', [requestId]);
+        if (!requestRes.rows[0]) {
             await db.query('ROLLBACK');
             return res.status(404).json({ message: 'Request not found' });
         }
@@ -149,19 +152,127 @@ const handleWithdrawalRequest = async (req, res) => {
             return res.status(400).json({ message: 'Request already processed' });
         }
 
-        if (status === 'approved') {
-            const ledgerService = require('../services/ledgerService');
-            await ledgerService.recordWithdrawal(request.driver_id, parseFloat(request.amount), requestId);
+        if (status === 'rejected') {
+            await db.query(
+                "UPDATE withdrawal_requests SET status = 'rejected', processed_at = NOW() WHERE id = $1",
+                [requestId]
+            );
+            await db.query('COMMIT');
+            return res.json({ message: 'Request rejected' });
         }
 
-        await db.query('UPDATE withdrawal_requests SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [status, requestId]);
+        // APPROVED: Fetch driver's active payout method
+        const methodRes = await db.query(
+            'SELECT * FROM driver_payout_methods WHERE driver_id = $1 AND is_active = true LIMIT 1',
+            [request.driver_id]
+        );
+        if (!methodRes.rows[0]) {
+            await db.query('ROLLBACK');
+            return res.status(400).json({ message: 'Driver has no active payout method' });
+        }
+
+        const method = methodRes.rows[0];
+
+        // Security: Enforce cooldown period
+        if (method.cooldown_until && new Date(method.cooldown_until) > new Date()) {
+            await db.query('ROLLBACK');
+            return res.status(400).json({ message: `Payout method is in cooldown until ${method.cooldown_until}` });
+        }
+
+        // Deduct balance via ledger
+        const ledgerService = require('../services/ledgerService');
+        await ledgerService.recordWithdrawal(request.driver_id, parseFloat(request.amount), requestId);
+
+        // Determine payout mode
+        const payoutMode = method.method_type === 'upi' ? 'UPI' : 'IMPS';
+        const amountInPaise = Math.round(parseFloat(request.amount) * 100);
+
+        let razorpayPayoutId = null;
+        let payoutStatus = 'processing';
+
+        // Trigger Razorpay payout
+        if (method.razorpay_fund_account_id) {
+            try {
+                const payout = await razorpayService.triggerPayout({
+                    amountInPaise,
+                    fundAccountId: method.razorpay_fund_account_id,
+                    mode: payoutMode,
+                    referenceId: requestId,
+                });
+                razorpayPayoutId = payout.id;
+                payoutStatus = payout.status === 'processed' ? 'paid' : 'processing';
+            } catch (payoutErr) {
+                console.error('Razorpay payout error:', payoutErr.error?.description);
+                // Don't fail - mark as processing, webhook will update
+                payoutStatus = 'processing';
+            }
+        }
+
+        // Update withdrawal status
+        await db.query(
+            `UPDATE withdrawal_requests 
+             SET status = $1, razorpay_payout_id = $2, payout_method = $3, processed_at = NOW()
+             WHERE id = $4`,
+            [payoutStatus, razorpayPayoutId, method.method_type, requestId]
+        );
+
+        // Audit log
+        await db.query(
+            `INSERT INTO audit_logs (actor_id, actor_role, action, target_type, target_id, metadata)
+             VALUES ($1, 'admin', 'withdrawal_approved', 'withdrawal_requests', $2, $3)`,
+            [adminId, requestId, JSON.stringify({ amount: request.amount, method: method.method_type, razorpayPayoutId })]
+        );
 
         await db.query('COMMIT');
-        res.json({ message: `Request ${status} successfully` });
+
+        // Notify driver via socket
+        const io = req.app.get('io');
+        if (io) {
+            const driverRes = await db.query('SELECT user_id FROM drivers WHERE id = $1', [request.driver_id]);
+            if (driverRes.rows[0]) {
+                io.to(`user_${driverRes.rows[0].user_id}`).emit('withdrawal-status-update', {
+                    requestId, status: payoutStatus
+                });
+            }
+        }
+
+        res.json({ message: `Withdrawal approved. Payout ${payoutStatus}.`, razorpayPayoutId });
     } catch (err) {
         await db.query('ROLLBACK');
-        console.error('Handle withdrawal request error:', err);
+        console.error('Handle withdrawal error:', err);
         res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// Admin: Retry a failed payout
+const retryPayout = async (req, res) => {
+    const { requestId } = req.body;
+    try {
+        const requestRes = await db.query(
+            "SELECT wr.*, dpm.razorpay_fund_account_id, dpm.method_type FROM withdrawal_requests wr JOIN driver_payout_methods dpm ON dpm.driver_id = wr.driver_id AND dpm.is_active = true WHERE wr.id = $1 AND wr.status = 'failed'",
+            [requestId]
+        );
+        if (!requestRes.rows[0]) return res.status(404).json({ message: 'No failed withdrawal found' });
+
+        const request = requestRes.rows[0];
+        const amountInPaise = Math.round(parseFloat(request.amount) * 100);
+
+        const payout = await razorpayService.triggerPayout({
+            amountInPaise,
+            fundAccountId: request.razorpay_fund_account_id,
+            mode: request.method_type === 'upi' ? 'UPI' : 'IMPS',
+            referenceId: `retry_${requestId}`,
+        });
+
+        await db.query(
+            "UPDATE withdrawal_requests SET razorpay_payout_id = $1, status = 'processing', retry_count = retry_count + 1 WHERE id = $2",
+            [payout.id, requestId]
+        );
+
+        res.json({ message: 'Payout retry initiated', payoutId: payout.id });
+    } catch (err) {
+        console.error('Retry payout error:', err);
+        res.status(500).json({ message: 'Retry failed' });
     }
 };
 
@@ -171,5 +282,6 @@ module.exports = {
     getPendingSettlements,
     processBatchSettlement,
     getWithdrawalRequests,
-    handleWithdrawalRequest
+    handleWithdrawalRequest,
+    retryPayout
 };

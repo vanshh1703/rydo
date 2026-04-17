@@ -119,6 +119,15 @@ const Navbar = () => {
                       <Wallet size={20} />
                       <span>My Wallet</span>
                     </Link>
+
+                    <Link 
+                      to="/driver/payout-settings" 
+                      className="flex items-center space-x-3 p-3 hover:bg-gray-50 rounded-xl text-gray-600 font-medium"
+                      onClick={() => setIsMenuOpen(false)}
+                    >
+                      <span className="text-[18px]">🏦</span>
+                      <span>Payout Settings</span>
+                    </Link>
                   </>
                 ) : (
                   <Link 

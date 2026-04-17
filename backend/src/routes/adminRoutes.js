@@ -1,9 +1,13 @@
 const express = require('express');
 const { getPlatformStats, getDriverDirectory } = require('../controllers/adminController');
-const { getPendingSettlements, processBatchSettlement, getWithdrawalRequests, handleWithdrawalRequest } = require('../controllers/payoutController');
+const { getPendingSettlements, processBatchSettlement, getWithdrawalRequests, handleWithdrawalRequest, retryPayout } = require('../controllers/payoutController');
 const { updateConfig, getConfigs } = require('../controllers/fintechController');
+const { handleWebhook } = require('../controllers/paymentController');
 const { authMiddleware, roleMiddleware } = require('../utils/authMiddleware');
 const router = express.Router();
+
+// Razorpay webhook (no auth - verified by signature)
+router.post('/webhook/razorpay', express.raw({ type: 'application/json' }), handleWebhook);
 
 router.get('/stats', authMiddleware, roleMiddleware(['admin']), getPlatformStats);
 router.get('/drivers', authMiddleware, roleMiddleware(['admin']), getDriverDirectory);
@@ -15,6 +19,7 @@ router.post('/settle-all', authMiddleware, roleMiddleware(['admin']), processBat
 // Withdrawal management
 router.get('/withdrawals', authMiddleware, roleMiddleware(['admin']), getWithdrawalRequests);
 router.post('/handle-withdrawal', authMiddleware, roleMiddleware(['admin']), handleWithdrawalRequest);
+router.post('/retry-payout', authMiddleware, roleMiddleware(['admin']), retryPayout);
 
 // Platform config management
 router.get('/configs', authMiddleware, roleMiddleware(['admin']), getConfigs);

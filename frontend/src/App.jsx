@@ -11,6 +11,7 @@ import DriverWallet from './pages/DriverWallet';
 import RideHistory from './pages/RideHistory';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
+import DriverPayoutSettings from './pages/DriverPayoutSettings';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { user, loading } = useAuth();
@@ -84,6 +85,15 @@ function App() {
                 element={
                   <ProtectedRoute allowedRoles={['driver']}>
                     <DriverWallet />
+                  </ProtectedRoute>
+                } 
+              />
+
+              <Route 
+                path="/driver/payout-settings" 
+                element={
+                  <ProtectedRoute allowedRoles={['driver']}>
+                    <DriverPayoutSettings />
                   </ProtectedRoute>
                 } 
               />
